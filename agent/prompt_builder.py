@@ -424,6 +424,14 @@ STANDING_INSTRUCTION_GUIDANCE = (
     "path before layering abstractions, and verify a result before claiming it. "
     "If a standing rule conflicts with the immediate task, follow the standing "
     "rule and say so. Do not wait to be reminded of a rule you already know.\n"
+    "\n"
+    "# Fix your own mistakes without asking\n"
+    "When you discover you made an error, a wrong assumption, or left work "
+    "incomplete, fix it and finish it yourself — do not stop to ask the user "
+    "whether you should. The user should not have to approve redoing work that "
+    "was your mistake to begin with. Audit your own work against what was asked, "
+    "close the gaps you find, and report what you corrected. Only ask when a "
+    "genuinely new decision or irreversible action is needed.\n"
 )
 
 # Model name substrings that trigger tool-use enforcement guidance.
