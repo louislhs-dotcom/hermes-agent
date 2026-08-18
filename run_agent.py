@@ -2157,6 +2157,36 @@ class AIAgent:
                     continue
                 if msg.get(_DB_PERSISTED_MARKER):
                     continue
+                # Persist-time empty-payload guard: an assistant/user message
+                # with no content, no tool_calls, no reasoning, and no codex
+                # items (a dead-stream stub that escaped the conversation
+                # loop's skip guard via an early persist path) must NEVER be
+                # written to the durable session store.  Once it lands in
+                # SQLite it poisons every subsequent turn of that session
+                # until manual intervention (/new or DB surgery) — the
+                # in-memory ``repair_empty_non_final_messages`` sanitizer
+                # heals the wire copy but never mutates the stored history, so
+                # the poison is permanent.  Skipping it here at the write
+                # boundary makes the transcript self-healing at the source:
+                # the empty turn simply never persists, so a resumed session
+                # loads a clean history.  Tool messages are excluded — they
+                # have their own orphan/pairing validation in the sanitizer.
+                # (Root cause of the Aug 2026 "chat died again" session
+                # collapses: Ollama Cloud stream drops left empty assistant
+                # stubs that early-turn persistence flushed to the DB before
+                # the conversation loop's ``_is_empty_partial_stub`` guard
+                # could skip them.)
+                if msg.get("role") in ("assistant", "user"):
+                    from agent.agent_runtime_helpers import _msg_has_payload
+                    if not _msg_has_payload(msg):
+                        msg[_DB_PERSISTED_MARKER] = True
+                        logger.debug(
+                            "Persist-time guard: skipped empty %s message "
+                            "(no content/tool_calls/reasoning) at index %d — "
+                            "preventing transcript poisoning",
+                            msg.get("role"), _msg_idx,
+                        )
+                        continue
                 # Already-durable messages: either carried over from the loaded
                 # history copy, or seeded by a caller. Stamp them so future
                 # flushes skip them without consulting any id() set again.
