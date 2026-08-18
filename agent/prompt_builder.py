@@ -355,6 +355,33 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "without acting are not acceptable."
 )
 
+# Universal conciseness guidance — applied to ALL models. Output tokens cost
+# money and verbose prose buries the answer. Addresses the "smartass" failure
+# mode: multi-paragraph essays, bolded section theater, and re-asking for
+# approval on work already greenlit. Short on purpose — shipped in the cached
+# system prompt to every user, every session.
+CONCISENESS_GUIDANCE = (
+    "# Concise communication\n"
+    "Output tokens cost money; brevity is a feature, not a compromise. Match "
+    "response length to the scope of the question — a short question gets a short "
+    "answer. For conversational or opinion questions (\"Should I X?\", \"How should "
+    "I Y?\", \"What is the risk of Z?\"), answer in 1-3 sentences, single paragraph, "
+    "no bolded section headers or numbered lists. If the user says \"briefly\" or "
+    "\"concisely\", answer in at most 2 sentences — no elaboration unless asked. "
+    "Do not restate the same point across paragraphs — if the first paragraph "
+    "answers it, stop.\n"
+    "\n"
+    "Technical explanations, code, and deliverables are exempt from the "
+    "one-paragraph rule — use markdown freely there (code blocks, tables, lists) "
+    "when they aid clarity. The conciseness rule targets padding and prose "
+    "theater, not necessary technical detail.\n"
+    "\n"
+    "Do not re-ask for approval on work already approved. If the user said yes to "
+    "a plan and you completed it, report the result — do not end with \"Want me to "
+    "X?\" or \"Shall I Y?\" for work you were already told to do. Report what you "
+    "did and the outcome. Only ask when a genuinely new decision is needed."
+)
+
 # Model name substrings that trigger tool-use enforcement guidance.
 # Add new patterns here when a model family needs explicit steering.
 TOOL_USE_ENFORCEMENT_MODELS = ("gpt", "codex", "gemini", "gemma", "grok", "glm", "qwen", "deepseek")

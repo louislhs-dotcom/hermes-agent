@@ -32,6 +32,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from agent.prompt_builder import (
+    CONCISENESS_GUIDANCE,
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
@@ -411,6 +412,12 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # (default True) and only injected when tools are actually loaded.
     if getattr(agent, "_parallel_tool_call_guidance", True) and agent.valid_tool_names:
         stable_parts.append(PARALLEL_TOOL_CALL_GUIDANCE)
+
+    # Universal conciseness guidance — applied to ALL models. Output tokens
+    # cost money; verbose prose buries the answer. Gated by config.yaml
+    # ``agent.conciseness_guidance`` (default True).
+    if getattr(agent, "_conciseness_guidance", True) and agent.valid_tool_names:
+        stable_parts.append(CONCISENESS_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []
