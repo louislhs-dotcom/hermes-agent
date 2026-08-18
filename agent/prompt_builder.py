@@ -182,13 +182,14 @@ MEMORY_GUIDANCE = (
     "'submitted PR Y', 'Phase N done', file counts, or any artifact that will be stale "
     "in 7 days. If a fact will be stale in a week, it does not belong in memory. "
     "If you've discovered a new way to do something, solved a problem that could be "
-    "necessary later, save it as a skill with the skill tool.\n"
+    "necessary later, save it as a skill with skill_manage(action='create').\n"
     "Write memories as declarative facts, not instructions to yourself. "
     "'User prefers concise responses' ✓ — 'Always respond concisely' ✗. "
     "'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗. "
     "Imperative phrasing gets re-read as a directive in later sessions and can "
-    "cause repeated work or override the user's current request. Procedures and "
-    "workflows belong in skills, not memory."
+    "cause repeated work or override the user's current request. Save durable "
+    "environmental facts and preferences to memory; save step-by-step procedures "
+    "and workflows to skills, not memory."
 )
 
 SESSION_SEARCH_GUIDANCE = (
@@ -210,7 +211,7 @@ SESSION_SEARCH_GUIDANCE = (
 # subscription OAuth token, not an sk-ant-api… key, which does not hit the
 # filter.
 SKILLS_GUIDANCE = (
-    "When you work out a non-trivial workflow, record it with skill_manage "
+    "When you work out a broadly reusable workflow (across projects or sessions), record it with skill_manage "
     "for future reuse.\n"
     "When using a skill and finding it outdated, incomplete, or wrong, "
     "patch it immediately with skill_manage(action='patch') — don't wait to be asked. "
@@ -219,7 +220,7 @@ SKILLS_GUIDANCE = (
     "## Skill Safety Rule\n"
     "1. **UNAVAILABLE** — If a skill placeholder contains `[SKILL_PRUNED]`, the skill content was lost in compression and is inaccessible.\n"
     "2. **RELOAD** — Before performing any action that depends on a skill, re-check its content with `skill_view(name='...')` if it shows `[SKILL_PRUNED]`.\n"
-    "3. **WAIT** — If a skill is loading or was just pruned, wait for the reload confirmation before proceeding.\n"
+    "3. **WAIT** — If a skill is loading or was just pruned, proceed only after `skill_view` returns the full, unpruned content.\n"
     "4. **DEDUP** — After reloading a pruned skill, **ignore any remaining `[SKILL_PRUNED]` markers for that same skill** — they are historical artifacts from previous compactions and do not need further action."
 )
 
