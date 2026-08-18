@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from agent.prompt_builder import (
     CONCISENESS_GUIDANCE,
+    STANDING_INSTRUCTION_GUIDANCE,
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
@@ -418,6 +419,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # ``agent.conciseness_guidance`` (default True).
     if getattr(agent, "_conciseness_guidance", True) and agent.valid_tool_names:
         stable_parts.append(CONCISENESS_GUIDANCE)
+
+    # Universal standing-instruction adherence — applied to ALL models.
+    # Addresses the recurring failure mode of knowing a standing rule but
+    # forgetting to apply it mid-task. Gated by config.yaml
+    # ``agent.standing_instruction_guidance`` (default True).
+    if getattr(agent, "_standing_instruction_guidance", True) and agent.valid_tool_names:
+        stable_parts.append(STANDING_INSTRUCTION_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

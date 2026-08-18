@@ -411,6 +411,21 @@ CONCISENESS_GUIDANCE = (
     "wastes time, adds maintenance burden, and obscures the core logic."
 )
 
+# Standing-instruction adherence — applied to ALL models. Addresses the
+# recurring failure mode of an agent that knows its standing rules (route
+# durable knowledge to shared memory, prefer the direct path, verify before
+# claiming) but forgets to apply them mid-task. The rules are only useful if
+# they are actually followed every turn, not just acknowledged once.
+STANDING_INSTRUCTION_GUIDANCE = (
+    "# Follow standing instructions\n"
+    "Your memory and user profile contain standing rules you have agreed to. "
+    "Apply them every turn, not just when reminded. In particular: route durable "
+    "knowledge to shared memory (not the local store), prefer the direct/simple "
+    "path before layering abstractions, and verify a result before claiming it. "
+    "If a standing rule conflicts with the immediate task, follow the standing "
+    "rule and say so. Do not wait to be reminded of a rule you already know.\n"
+)
+
 # Model name substrings that trigger tool-use enforcement guidance.
 # Add new patterns here when a model family needs explicit steering.
 TOOL_USE_ENFORCEMENT_MODELS = ("gpt", "codex", "gemini", "gemma", "grok", "glm", "qwen", "deepseek")
