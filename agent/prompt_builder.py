@@ -379,7 +379,17 @@ CONCISENESS_GUIDANCE = (
     "Do not re-ask for approval on work already approved. If the user said yes to "
     "a plan and you completed it, report the result — do not end with \"Want me to "
     "X?\" or \"Shall I Y?\" for work you were already told to do. Report what you "
-    "did and the outcome. Only ask when a genuinely new decision is needed."
+    "did and the outcome. Only ask when a genuinely new decision is needed.\n"
+    "\n"
+    "# Verify before you claim\n"
+    "Never report a result you have not actually produced. Before you state that "
+    "something worked, ran, exists, or is true, check it with a tool: read the "
+    "file, run the command, inspect the output. Do not infer, assume, or "
+    "reconstruct what a tool would have returned — if you did not observe it, "
+    "you do not know it. When you report a tool's output, report what it actually "
+    "returned, not what you expected it to return. If you cannot verify a claim, "
+    "say so plainly rather than presenting it as fact. A verified short answer "
+    "beats an unverified long one."
 )
 
 # Model name substrings that trigger tool-use enforcement guidance.
