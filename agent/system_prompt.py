@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 from agent.prompt_builder import (
     CONCISENESS_GUIDANCE,
     STANDING_INSTRUCTION_GUIDANCE,
+    ADAPTIVE_REASONING_GUIDANCE,
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
@@ -426,6 +427,12 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # ``agent.standing_instruction_guidance`` (default True).
     if getattr(agent, "_standing_instruction_guidance", True) and agent.valid_tool_names:
         stable_parts.append(STANDING_INSTRUCTION_GUIDANCE)
+
+    # Universal adaptive-reasoning guidance — applied to ALL models.
+    # Calibrates thinking effort to task complexity (no over/under-thinking).
+    # Gated by config.yaml ``agent.adaptive_reasoning_guidance`` (default True).
+    if getattr(agent, "_adaptive_reasoning_guidance", True) and agent.valid_tool_names:
+        stable_parts.append(ADAPTIVE_REASONING_GUIDANCE)
 
     # Tool-aware behavioral guidance: only inject when the tools are loaded
     tool_guidance = []

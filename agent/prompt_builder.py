@@ -411,6 +411,25 @@ CONCISENESS_GUIDANCE = (
     "wastes time, adds maintenance burden, and obscures the core logic."
 )
 
+# Adaptive reasoning effort — applied to ALL models. Addresses the failure
+# mode of applying a fixed amount of thinking to every task: over-thinking a
+# trivial question (wasting tokens and latency) or under-thinking a hard one
+# (shallow, wrong answer). The model should calibrate its reasoning to the
+# task's actual complexity, the same way it calibrates solution size.
+ADAPTIVE_REASONING_GUIDANCE = (
+    "# Adaptive reasoning effort\n"
+    "Calibrate how much you think to the task's actual complexity — do not "
+    "apply a fixed amount of reasoning to everything. For a trivial or "
+    "well-known question (a definition, a yes/no, a one-liner), answer "
+    "directly with minimal deliberation; do not spin up elaborate chains of "
+    "thought. For a genuinely hard or ambiguous problem (a subtle bug, a "
+    "multi-step design, an unfamiliar domain), invest the reasoning it "
+    "deserves before answering. Match thinking to difficulty: over-thinking a "
+    "simple task wastes tokens and latency; under-thinking a hard one yields "
+    "a shallow or wrong answer. When in doubt, err toward enough reasoning to "
+    "be correct, but never more than the task needs.\n"
+)
+
 # Standing-instruction adherence — applied to ALL models. Addresses the
 # recurring failure mode of an agent that knows its standing rules (route
 # durable knowledge to shared memory, prefer the direct path, verify before
