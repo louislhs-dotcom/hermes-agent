@@ -56,6 +56,7 @@ except ImportError:
 # gracefully: if tencentdb_client.py is not importable from this environment,
 # recall falls back to raw relevance order — the provider must never break.
 _tdai_decay_available = False
+_tdai_config_available = False
 try:
     # Resolve the shared client (<hermes-agent>/tools/tencentdb_client.py).
     # The provider file may be loaded from the bundled hermes-agent tree OR a
@@ -87,6 +88,17 @@ try:
         consolidate_hits as _tdai_consolidate,
     )
     _tdai_decay_available = True
+    # Shared config resolution, so the plugin and the standalone client agree on
+    # endpoint/key precedence (process env first, then $HERMES_HOME/.env) and
+    # report a service_id split instead of silently using two namespaces.
+    try:
+        from tencentdb_client import (
+            TdaiConfig as _TdaiConfig,
+            warn_on_service_id_split as _tdai_warn_split,
+        )
+        _tdai_config_available = True
+    except Exception:
+        _tdai_config_available = False
 except Exception:
     logger.warning(
         "tencentdb_client decay helpers not importable; "
@@ -132,9 +144,30 @@ class MemoryTencentdbV2Provider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
-        self._endpoint = os.environ.get("TDAI_MEMORY_ENDPOINT", "http://127.0.0.1:8420")
-        api_key = os.environ.get("TDAI_MEMORY_API_KEY", "")
+
+        # Resolve through the shared client when available so both callers use
+        # the same precedence (process env, then $HERMES_HOME/.env). This
+        # provider keeps its own bare "default" service_id rather than the
+        # client's "hermes-<profile>", so existing data stays addressable; the
+        # split is reported rather than silently partitioning the store.
+        endpoint = api_key = service_id = ""
+        if _tdai_config_available:
+            try:
+                shared = _TdaiConfig.from_env(kwargs.get("profile") or "default")
+                endpoint = shared.endpoint
+                api_key = shared.api_key or ""
+            except Exception:
+                logger.debug("shared config resolution failed; using os.environ")
+        self._endpoint = endpoint or os.environ.get(
+            "TDAI_MEMORY_ENDPOINT", "http://127.0.0.1:8420"
+        )
+        api_key = api_key or os.environ.get("TDAI_MEMORY_API_KEY", "")
         service_id = os.environ.get("TDAI_MEMORY_SERVICE_ID", "")
+        if _tdai_config_available:
+            try:
+                _tdai_warn_split("memory_tencentdb_v2", service_id or "default")
+            except Exception:
+                pass
 
         if not _sdk_available:
             logger.error("tencentdb_agent_memory SDK not available, cannot initialize")

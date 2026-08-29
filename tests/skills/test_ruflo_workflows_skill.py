@@ -23,7 +23,16 @@ SCRIPTS = {
     "swarm": SKILL_DIR / "scripts" / "ruflo-swarm.sh",
     "memory": SKILL_DIR / "scripts" / "ruflo-memory.sh",
 }
-HEALTHCHECK = Path.home() / ".hermes" / "scripts" / "ruflo-healthcheck.sh"
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+
+# These live in the user's Hermes install, not in this repo, so they are absent
+# in CI and on a fresh checkout. The tests below are conditional on them by
+# design; run with HERMES_HOME pointed at a real install to exercise them.
+_NOT_INSTALLED = (
+    "not part of the repo; set HERMES_HOME to a Hermes install to run this"
+)
+
+HEALTHCHECK = HERMES_HOME / "scripts" / "ruflo-healthcheck.sh"
 
 
 @pytest.fixture(scope="module")
@@ -139,19 +148,19 @@ def test_memory_script_health_requires_no_auth_key():
 
 def test_healthcheck_exists_and_syntax_ok():
     if not HEALTHCHECK.is_file():
-        pytest.skip("healthcheck not present in this environment")
+        pytest.skip(f"{HEALTHCHECK} {_NOT_INSTALLED}")
     result = subprocess.run(
         ["bash", "-n", str(HEALTHCHECK)], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, f"syntax error:\n{result.stderr}"
 
 
-RUFLO_MCP_WRAPPER = Path.home() / ".hermes" / "scripts" / "ruflo-mcp.sh"
+RUFLO_MCP_WRAPPER = HERMES_HOME / "scripts" / "ruflo-mcp.sh"
 
 
 def test_ruflo_mcp_wrapper_exists_and_syntax_ok():
     if not RUFLO_MCP_WRAPPER.is_file():
-        pytest.skip("ruflo mcp wrapper not present in this environment")
+        pytest.skip(f"{RUFLO_MCP_WRAPPER} {_NOT_INSTALLED}")
     result = subprocess.run(
         ["bash", "-n", str(RUFLO_MCP_WRAPPER)], capture_output=True, text=True, timeout=30
     )
@@ -161,7 +170,7 @@ def test_ruflo_mcp_wrapper_exists_and_syntax_ok():
 def test_ruflo_mcp_wrapper_fails_fast_on_expired_token():
     """Expired OAuth token must fail fast with a clear message, never start MCP."""
     if not RUFLO_MCP_WRAPPER.is_file():
-        pytest.skip("ruflo mcp wrapper not present in this environment")
+        pytest.skip(f"{RUFLO_MCP_WRAPPER} {_NOT_INSTALLED}")
     import shutil
     import tempfile
 
@@ -186,8 +195,8 @@ def test_ruflo_mcp_wrapper_does_not_leak_token_to_config():
     import yaml
 
     for cfg_path in [
-        Path.home() / ".hermes" / "config.yaml",
-        *(Path.home() / ".hermes" / "profiles").glob("*/config.yaml"),
+        HERMES_HOME / "config.yaml",
+        *(HERMES_HOME / "profiles").glob("*/config.yaml"),
     ]:
         if not cfg_path.is_file():
             continue
@@ -203,7 +212,7 @@ def test_ruflo_mcp_wrapper_does_not_leak_token_to_config():
             )
 
 
-PATCH_SCRIPT = Path.home() / ".hermes" / "scripts" / "ruflo-patch-provider.sh"
+PATCH_SCRIPT = HERMES_HOME / "scripts" / "ruflo-patch-provider.sh"
 RUFLO_EXEC_CORE = (
     Path.home()
     / ".local/lib/node_modules/ruflo/node_modules/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js"
@@ -212,7 +221,7 @@ RUFLO_EXEC_CORE = (
 
 def test_patch_script_exists_and_syntax_ok():
     if not PATCH_SCRIPT.is_file():
-        pytest.skip("patch script not present in this environment")
+        pytest.skip(f"{PATCH_SCRIPT} {_NOT_INSTALLED}")
     result = subprocess.run(
         ["bash", "-n", str(PATCH_SCRIPT)], capture_output=True, text=True, timeout=30
     )
@@ -223,7 +232,7 @@ def test_patch_script_is_idempotent_and_self_heals():
     """Patch script must: no-op when applied (exit 0), re-apply after a simulated
     npm wipe (stock source), and stay idempotent after healing."""
     if not PATCH_SCRIPT.is_file() or not RUFLO_EXEC_CORE.is_file():
-        pytest.skip("patch script or ruflo install not present")
+        pytest.skip(f"{PATCH_SCRIPT} (or the ruflo install) {_NOT_INSTALLED}")
 
     original = RUFLO_EXEC_CORE.read_text()
     patched_marker = "ANTHROPIC_BASE_URL ||"

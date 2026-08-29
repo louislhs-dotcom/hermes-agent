@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-PROV = Path(
-    "/Users/louisling/.hermes/hermes-agent/plugins/memory/memory_tencentdb_v2"
-)
+# Resolve from this file's location so the test runs from any checkout,
+# rather than depending on one developer's home directory.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PROV = REPO_ROOT / "plugins" / "memory" / "memory_tencentdb_v2"
 
 
 def _load_provider_module():
@@ -86,3 +87,91 @@ def test_prefetch_applies_decay_and_consolidation(monkeypatch):
     assert "very old but very relevant fact" in prepend
     assert prepend.index("brand new fact") < prepend.index("very old but very relevant fact")
 
+
+
+# ── shared config resolution ─────────────────────────────────────────────
+#
+# initialize() resolves endpoint/api_key through the shared tencentdb_client
+# config (process env, then $HERMES_HOME/.env) so the provider and the
+# standalone client cannot disagree about where the gateway is. It keeps its
+# own bare "default" service_id rather than the client's "hermes-<profile>",
+# so previously stored data stays addressable; the divergence is warned about
+# instead of silently partitioning the store.
+
+
+def _provider_with_fake_sdk(monkeypatch):
+    mod = _load_provider_module()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(mod, "_MemoryClient", _FakeClient, raising=False)
+    monkeypatch.setattr(mod, "_sdk_available", True, raising=False)
+    return mod
+
+
+def test_initialize_resolves_api_key_from_hermes_home_env(tmp_path, monkeypatch):
+    """A key in $HERMES_HOME/.env must reach the SDK client.
+
+    Previously initialize() read only os.environ, so a key configured in the
+    profile's .env produced the literal placeholder "local".
+    """
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    for var in ("TDAI_MEMORY_API_KEY", "TDAI_MEMORY_ENDPOINT", "TDAI_MEMORY_SERVICE_ID"):
+        monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".env").write_text(
+        "TDAI_MEMORY_API_KEY=key-from-file\nTDAI_MEMORY_ENDPOINT=http://127.0.0.1:8421\n",
+        encoding="utf-8",
+    )
+
+    mod = _provider_with_fake_sdk(monkeypatch)
+    if not mod._tdai_config_available:
+        pytest.skip("shared tencentdb_client config helpers not importable")
+    import tencentdb_client
+
+    tencentdb_client.reset_config_cache()
+
+    prov = mod.MemoryTencentdbV2Provider()
+    prov.initialize("sess-1", profile="work")
+
+    assert prov._endpoint == "http://127.0.0.1:8421"
+    assert prov._client.kwargs["api_key"] == "key-from-file"
+    assert prov._available is True
+
+
+def test_initialize_preserves_plugin_service_id_default(tmp_path, monkeypatch):
+    """The provider keeps "default", not the client's "hermes-<profile>"."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.delenv("TDAI_MEMORY_SERVICE_ID", raising=False)
+
+    mod = _provider_with_fake_sdk(monkeypatch)
+    prov = mod.MemoryTencentdbV2Provider()
+    prov.initialize("sess-1", profile="work")
+
+    assert prov._client.kwargs["service_id"] == "default"
+
+
+def test_initialize_honours_explicit_service_id(tmp_path, monkeypatch):
+    """An explicit TDAI_MEMORY_SERVICE_ID pins both callers to one namespace."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("TDAI_MEMORY_SERVICE_ID", "shared-ns")
+
+    mod = _provider_with_fake_sdk(monkeypatch)
+    prov = mod.MemoryTencentdbV2Provider()
+    prov.initialize("sess-1", profile="work")
+
+    assert prov._client.kwargs["service_id"] == "shared-ns"
+
+
+def test_initialize_survives_missing_sdk(tmp_path, monkeypatch):
+    """No SDK must degrade gracefully, never raise into the agent."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    mod = _load_provider_module()
+    monkeypatch.setattr(mod, "_sdk_available", False, raising=False)
+
+    prov = mod.MemoryTencentdbV2Provider()
+    prov.initialize("sess-1", profile="work")
+
+    assert prov._available is False
+    assert prov._client is None
