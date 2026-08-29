@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 import urllib.request
@@ -17,7 +18,103 @@ from pathlib import Path
 from typing import Any, Optional
 from dataclasses import dataclass
 
+_log = logging.getLogger(__name__)
+
 # ─── Config ──────────────────────────────────────────────────────────────
+
+#: Endpoints that are safe to talk to over plaintext HTTP.
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0")
+
+#: Cache of parsed ``.env`` files, keyed by path -> (mtime, size, parsed dict).
+#: Re-parsed only when the file changes, so config reads stay off the hot path.
+_ENV_FILE_CACHE: dict[str, tuple[float, int, dict]] = {}
+
+#: Cache of resolved configs, keyed by profile. Invalidated by ``reset_config_cache``
+#: and automatically whenever the backing ``.env`` file changes on disk.
+_CONFIG_CACHE: dict[str, "TdaiConfig"] = {}
+
+#: Records the service_id each caller resolved, so a client/plugin split can be
+#: reported once instead of silently partitioning the remote store.
+_SEEN_SERVICE_IDS: dict[str, str] = {}
+
+
+def _hermes_home() -> Path:
+    """Resolve HERMES_HOME, falling back to ``~/.hermes``.
+
+    Prefers the canonical resolver in ``hermes_constants`` so profile-scoped
+    installs work; that module is not importable from every context this
+    client runs in (standalone scripts, copied plugin trees), hence the
+    fallback.
+    """
+    try:
+        from hermes_constants import hermes_home  # type: ignore
+
+        return Path(hermes_home())
+    except Exception:
+        env_home = os.environ.get("HERMES_HOME", "").strip()
+        if env_home:
+            return Path(env_home)
+        return Path.home() / ".hermes"
+
+
+def _parse_env_file(path: Path) -> dict:
+    """Parse a ``KEY=value`` env file, tolerating ``export`` and quotes.
+
+    Cached on (mtime, size) so repeated config lookups do not re-read the file.
+    """
+    key = str(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        _ENV_FILE_CACHE.pop(key, None)
+        return {}
+
+    cached = _ENV_FILE_CACHE.get(key)
+    if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+        return cached[2]
+
+    env: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].lstrip()
+            k, _, v = line.partition("=")
+            v = v.strip()
+            if v[:1] in ("'", '"'):
+                # Quoted: take everything up to the matching close quote, so an
+                # inline comment after it is dropped but a '#' inside is kept.
+                quote = v[0]
+                end = v.find(quote, 1)
+                v = v[1:end] if end != -1 else v[1:]
+            elif " #" in v:
+                # Unquoted: a ' #' starts a trailing comment.
+                v = v.split(" #", 1)[0].strip()
+            env[k.strip()] = v
+    except OSError:
+        return {}
+
+    _ENV_FILE_CACHE[key] = (stat.st_mtime, stat.st_size, env)
+    return env
+
+
+def _resolve_setting(key: str, env_file: dict) -> Optional[str]:
+    """Look up ``key`` with process environment taking precedence.
+
+    Environment variables win because Hermes loads the active profile's ``.env``
+    into the environment before starting a session — that is how every other
+    memory provider is configured. The file is only a fallback for standalone
+    scripts that run outside a Hermes session.
+    """
+    value = os.environ.get(key)
+    if value is not None and value.strip():
+        return value.strip()
+    value = env_file.get(key)
+    if value is not None and value.strip():
+        return value.strip()
+    return None
 
 
 @dataclass(frozen=True)
@@ -29,25 +126,65 @@ class TdaiConfig:
 
     @classmethod
     def from_env(cls, profile: str) -> "TdaiConfig":
-        """Load config from ~/.hermes/.env with profile awareness."""
-        env = {}
-        env_path = Path.home() / ".hermes" / ".env"
-        if env_path.exists():
-            for line in env_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if "=" in line and not line.startswith("#"):
-                    k, _, v = line.partition("=")
-                    env[k.strip()] = v.strip().strip('"').strip("'")
+        """Resolve config for ``profile``: process env first, then $HERMES_HOME/.env."""
+        cached = _CONFIG_CACHE.get(profile)
+        if cached is not None and not cached._is_stale():
+            return cached
 
-        endpoint = (env.get("TDAI_MEMORY_ENDPOINT") or "http://127.0.0.1:8420").rstrip("/")
-        api_key = env.get("TDAI_MEMORY_API_KEY")
-        service_id = env.get("TDAI_MEMORY_SERVICE_ID") or "default"
+        env_file = _parse_env_file(_hermes_home() / ".env")
 
-        # Profile-scoped service_id if not explicitly set
+        endpoint = (
+            _resolve_setting("TDAI_MEMORY_ENDPOINT", env_file) or "http://127.0.0.1:8420"
+        ).rstrip("/")
+        api_key = _resolve_setting("TDAI_MEMORY_API_KEY", env_file)
+        service_id = _resolve_setting("TDAI_MEMORY_SERVICE_ID", env_file) or "default"
+
+        # Profile-scoped service_id when not explicitly configured. NOTE: the
+        # memory_tencentdb_v2 plugin defaults to a bare "default" instead, so
+        # the two can address different namespaces on the same gateway. Set
+        # TDAI_MEMORY_SERVICE_ID explicitly to pin both to one namespace;
+        # ``warn_on_service_id_split`` reports the divergence when it happens.
         if service_id == "default":
             service_id = f"hermes-{profile}"
 
-        return cls(endpoint=endpoint, api_key=api_key, service_id=service_id)
+        timeout_raw = _resolve_setting("TDAI_MEMORY_TIMEOUT", env_file)
+        try:
+            timeout = float(timeout_raw) if timeout_raw else 8.0
+        except ValueError:
+            timeout = 8.0
+
+        config = cls(
+            endpoint=endpoint, api_key=api_key, service_id=service_id, timeout=timeout
+        )
+        config._warn_if_insecure()
+        _CONFIG_CACHE[profile] = config
+        return config
+
+    def _is_stale(self) -> bool:
+        """True when the backing .env changed since this config was built."""
+        path = _hermes_home() / ".env"
+        key = str(path)
+        cached = _ENV_FILE_CACHE.get(key)
+        if cached is None:
+            return True
+        try:
+            stat = path.stat()
+        except OSError:
+            return key in _ENV_FILE_CACHE
+        return cached[0] != stat.st_mtime or cached[1] != stat.st_size
+
+    def _warn_if_insecure(self) -> None:
+        """Warn when a bearer token would cross the network in the clear."""
+        if not self.api_key or self.endpoint.startswith("https://"):
+            return
+        host = self.endpoint.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        if host in _LOCAL_HOSTS:
+            return
+        _log.warning(
+            "TDAI_MEMORY_ENDPOINT is remote (%s) but uses plaintext HTTP; the API "
+            "key will be sent unencrypted. Use https:// for non-loopback endpoints.",
+            self.endpoint,
+        )
 
     def headers(self) -> dict:
         h = {"Content-Type": "application/json", "x-tdai-service-id": self.service_id}
@@ -56,7 +193,67 @@ class TdaiConfig:
         return h
 
 
+def reset_config_cache() -> None:
+    """Drop cached configs and parsed env files (used by tests)."""
+    _CONFIG_CACHE.clear()
+    _ENV_FILE_CACHE.clear()
+    _SEEN_SERVICE_IDS.clear()
+
+
+def warn_on_service_id_split(source: str, service_id: str) -> None:
+    """Record the service_id a caller resolved and warn if callers disagree.
+
+    The shared client defaults to ``hermes-<profile>`` while the plugin defaults
+    to ``default``. When both run against one gateway without an explicit
+    TDAI_MEMORY_SERVICE_ID they write to different namespaces, so memories
+    stored by one are invisible to the other. This surfaces that instead of
+    letting it fail silently.
+    """
+    _SEEN_SERVICE_IDS[source] = service_id
+    distinct = set(_SEEN_SERVICE_IDS.values())
+    if len(distinct) > 1:
+        _log.warning(
+            "TencentDB service_id split across callers (%s). Memories written "
+            "under one namespace will not be visible from the other; set "
+            "TDAI_MEMORY_SERVICE_ID to pin a single namespace.",
+            ", ".join(f"{k}={v}" for k, v in sorted(_SEEN_SERVICE_IDS.items())),
+        )
+
+
+def namespaced_session(profile: str, session_id: str) -> str:
+    """Profile-scope a raw session_id for the L0 conversation layer."""
+    return f"hermes-{profile}/{session_id}"
+
+
 # ─── Low-level HTTP ──────────────────────────────────────────────────────
+
+
+def is_error(result: Optional[dict]) -> bool:
+    """True when a client call did not reach the gateway successfully.
+
+    Every public call in this module returns a dict rather than raising, so a
+    dropped write otherwise looks exactly like a successful one. Callers that
+    care about durability should gate on this.
+    """
+    if not isinstance(result, dict):
+        return True
+    return result.get("ok") is False or "error" in result
+
+
+def is_skipped(result: Optional[dict]) -> bool:
+    """True when a call was deliberately not attempted (e.g. no API key)."""
+    return isinstance(result, dict) and result.get("skipped") is True
+
+
+def _failure(path: str, code: int, detail: str) -> dict:
+    """Build a uniform, detectable failure result and log it.
+
+    Failures used to be returned as bare dicts that no caller inspected, so
+    network and HTTP errors were indistinguishable from success. They now carry
+    ``ok: False`` and are logged at warning level.
+    """
+    _log.warning("TencentDB %s failed (code=%s): %s", path, code, detail)
+    return {"ok": False, "code": code, "error": detail, "path": path}
 
 
 def _post_json(config: TdaiConfig, path: str, body: dict) -> dict:
@@ -69,11 +266,24 @@ def _post_json(config: TdaiConfig, path: str, body: dict) -> dict:
     )
     try:
         with urllib.request.urlopen(req, timeout=config.timeout) as resp:
-            return json.loads(resp.read().decode())
+            payload = json.loads(resp.read().decode())
+        # A non-dict body (list/str/null) would break every caller's .get().
+        if not isinstance(payload, dict):
+            return {"ok": True, "result": payload}
+        payload.setdefault("ok", True)
+        return payload
     except urllib.error.HTTPError as e:
-        return {"code": e.code, "error": e.read().decode()}
+        try:
+            detail = e.read().decode()
+        except Exception:
+            detail = e.reason if isinstance(e.reason, str) else str(e)
+        return _failure(path, e.code, detail)
+    except urllib.error.URLError as e:
+        return _failure(path, -1, f"{type(e).__name__}: {e.reason}")
+    except json.JSONDecodeError as e:
+        return _failure(path, -1, f"malformed JSON from gateway: {e}")
     except Exception as e:
-        return {"code": -1, "error": str(e)}
+        return _failure(path, -1, f"{type(e).__name__}: {e}")
 
 
 # ─── Public API ──────────────────────────────────────────────────────────
@@ -92,8 +302,9 @@ def write_conversation(
     if not config.api_key:
         return {"skipped": True, "reason": "no api_key"}
 
-    # Deterministic session_id namespacing
-    namespaced = f"hermes-{profile}/{session_id}"
+    # Deterministic session_id namespacing (shared with search_conversation).
+    namespaced = namespaced_session(profile, session_id)
+    warn_on_service_id_split("tencentdb_client", config.service_id)
 
     return _post_json(config, "/v2/conversation/add", {
         "session_id": namespaced,
@@ -117,7 +328,7 @@ def search_conversation(
 
     body = {"query": query, "limit": limit}
     if session_id:
-        body["session_id"] = f"hermes-{profile}/{session_id}"
+        body["session_id"] = namespaced_session(profile, session_id)
 
     return _post_json(config, "/v2/conversation/search", body)
 
@@ -273,14 +484,14 @@ def health_check(*, config: Optional[TdaiConfig] = None) -> dict:
         with urllib.request.urlopen(f"{config.endpoint}/health", timeout=config.timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
-        return {"status": "down", "error": str(e)}
+        return {"ok": False, "status": "down", "error": str(e)}
 
 
 # ─── Profile-specific session helpers ────────────────────────────────────
 
 def session_key(profile: str, topic: str) -> str:
     """Generate a profile-scoped session key."""
-    return f"hermes-{profile}/{topic}"
+    return namespaced_session(profile, topic)
 
 
 def skill_mirror_session(profile: str, skill_name: str, rel_file: str) -> str:
@@ -510,7 +721,7 @@ def search_conversation_decayed(
             raw["data"]["decay_applied"] = True
         return raw
     except Exception as e:
-        return {"code": -1, "error": str(e), "raw": raw}
+        return {"ok": False, "code": -1, "error": str(e), "raw": raw}
 
 
 # ─── High-level write helpers (best-effort, never raises) ────────────────
@@ -531,7 +742,7 @@ def durably_record(
             {"role": "assistant", "content": assistant_response},
         ], config=config)
     except Exception as e:
-        return {"error": str(e)}
+        return {"ok": False, "error": str(e)}
 
 
 def durably_extract_atomic(
@@ -545,7 +756,7 @@ def durably_extract_atomic(
     try:
         return write_atomic(profile, content, type_, config=config)
     except Exception as e:
-        return {"error": str(e)}
+        return {"ok": False, "error": str(e)}
 
 
 def durably_record_handoff(
@@ -565,4 +776,4 @@ def durably_record_handoff(
             {"role": "assistant", "content": summary},
         ], config=config)
     except Exception as e:
-        return {"error": str(e)}
+        return {"ok": False, "error": str(e)}

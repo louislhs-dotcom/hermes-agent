@@ -1,0 +1,6 @@
+# claude-flow runtime state — local to each machine, not for committing.
+# daemon-state.json, agents/store.json, policy/state.json and
+# swarm/swarm-state.json are regenerated at runtime and carry
+# machine-specific absolute paths.
+*
+!.gitignore

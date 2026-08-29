@@ -197,3 +197,14 @@ native/fts5_cjk/*.so
 # interrupted; consumed by launch-time recovery. Never commit it (was tracked
 # by accident via 3a69e34702, removed in the #72002 salvage).
 .lazy-refresh-incomplete
+
+# --- Local agent runtime artifacts (see also .swarm/, .claude-flow/, .codegraph/) ---
+# Vector store written at runtime; rebuilt on demand, never a source artifact.
+ruvector.db
+ruvector.db-shm
+ruvector.db-wal
+# Build/run logs captured during local setup.
+build.log
+log.txt
+# One-off local screenshot, unreferenced by docs or code.
+sqlite_leak_fix.png

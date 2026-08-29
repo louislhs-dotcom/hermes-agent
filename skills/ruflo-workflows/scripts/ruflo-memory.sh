@@ -32,6 +32,25 @@ fi
 
 AUTH=(-H "Authorization: Bearer $KEY" -H "x-tdai-service-id: $SERVICE_ID" -H "Content-Type: application/json")
 
+# POST to the gateway, failing loudly on transport or HTTP errors. Plain
+# `curl -s` exits 0 on 401/500, so the JSON parsers below would report an
+# expired key or a server error as "(no results)".
+api_post() {
+  local path="$1" payload="$2" raw status out
+  if ! raw=$(curl -sS --max-time 15 -w $'\n%{http_code}' \
+              -X POST "$GATEWAY$path" "${AUTH[@]}" -d "$payload"); then
+    echo "ERROR: request to $path failed (network error or timeout)" >&2
+    return 1
+  fi
+  status="${raw##*$'\n'}"
+  out="${raw%$'\n'*}"
+  if [[ "$status" != 2?? ]]; then
+    echo "ERROR: $path returned HTTP $status: ${out:0:200}" >&2
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
 case "$CMD" in
   store)
     CONTENT="${1:-}"
@@ -47,7 +66,7 @@ print(json.dumps({
 }))
 PY
 )
-    RESP=$(curl -s --max-time 15 -X POST "$GATEWAY/v2/conversation/add" "${AUTH[@]}" -d "$BODY")
+    RESP=$(api_post /v2/conversation/add "$BODY")
     echo "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("stored ok" if d.get("code")==0 else "ERROR: "+json.dumps(d)[:200])'
     ;;
 
@@ -60,8 +79,8 @@ import json, sys
 print(json.dumps({"query": sys.argv[1], "limit": int(sys.argv[2])}))
 PY
 )
-    curl -s --max-time 15 -X POST "$GATEWAY/v2/atomic/search" "${AUTH[@]}" -d "$BODY" \
-      | python3 -c '
+    RESP=$(api_post /v2/atomic/search "$BODY")
+    echo "$RESP" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 items = d.get("data", {}).get("items") or d.get("data", {}).get("results") or []
@@ -83,8 +102,8 @@ import json, sys
 print(json.dumps({"query": sys.argv[1], "limit": int(sys.argv[2])}))
 PY
 )
-    curl -s --max-time 15 -X POST "$GATEWAY/v2/conversation/search" "${AUTH[@]}" -d "$BODY" \
-      | python3 -c '
+    RESP=$(api_post /v2/conversation/search "$BODY")
+    echo "$RESP" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 msgs = d.get("data", {}).get("messages") or []
@@ -98,7 +117,7 @@ for m in msgs:
     ;;
 
   health)
-    curl -s --max-time 5 "$GATEWAY/health" && echo
+    curl -sS --max-time 5 --fail "$GATEWAY/health" && echo
     ;;
   *)
     echo "Unknown command: $CMD" >&2

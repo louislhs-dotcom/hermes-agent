@@ -3,23 +3,39 @@
 
 set -euo pipefail
 
+# Resolve paths relative to this script so the check works from any checkout
+# instead of one developer's home directory. HERMES_HOME still wins when set.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+
+# Prefer an explicit PYTHON, then the checkout's venv, then whatever is on PATH.
+if [[ -n "${PYTHON:-}" ]]; then
+    :
+elif [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+    PYTHON="$REPO_ROOT/venv/bin/python"
+elif [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+    PYTHON="$REPO_ROOT/.venv/bin/python"
+else
+    PYTHON="$(command -v python3 || command -v python)"
+fi
+
 echo "=== TencentDB Memory Provider Setup Verification ==="
 echo ""
 
 # 1. Check SDK
 echo "1. Checking tencentdb_agent_memory SDK..."
-if ~/.hermes/hermes-agent/venv/bin/python -c "import tencentdb_agent_memory; print('   OK:', tencentdb_agent_memory.__version__)" 2>/dev/null; then
+if "$PYTHON" -c "import tencentdb_agent_memory; print('   OK:', tencentdb_agent_memory.__version__)" 2>/dev/null; then
     echo "   ✓ SDK installed"
 else
     echo "   ✗ SDK NOT installed"
-    echo "   Run: ~/.hermes/hermes-agent/venv/bin/python -m pip install ./tencentdb_agent_memory_sdk_python-0.1.0-py3-none-any.whl"
+    echo "   Run: $PYTHON -m pip install ./tencentdb_agent_memory_sdk_python-0.1.0-py3-none-any.whl"
     exit 1
 fi
 
 # 2. Check provider symlink
 echo ""
 echo "2. Checking provider symlink..."
-PROVIDER_DIR="/Users/louisling/.hermes/hermes-agent/plugins/memory/memory_tencentdb_v2"
+PROVIDER_DIR="$REPO_ROOT/plugins/memory/memory_tencentdb_v2"
 if [[ -L "$PROVIDER_DIR" ]]; then
     TARGET=$(readlink "$PROVIDER_DIR")
     echo "   ✓ Symlink exists: $TARGET"
@@ -33,7 +49,7 @@ fi
 # 3. Check config
 echo ""
 echo "3. Checking Hermes config..."
-CONFIG_FILE="$HOME/.hermes/config.yaml"
+CONFIG_FILE="$HERMES_HOME/config.yaml"
 if grep -q "memory_tencentdb_v2" "$CONFIG_FILE" 2>/dev/null; then
     echo "   ✓ Provider enabled in config.yaml"
 else
@@ -81,7 +97,7 @@ fi
 # 6. Check skill exists
 echo ""
 echo "6. Checking Ruflo skill..."
-SKILL_DIR="$HOME/.hermes/skills/ruflo-workflows"
+SKILL_DIR="$HERMES_HOME/skills/ruflo-workflows"
 if [[ -d "$SKILL_DIR" ]]; then
     echo "   ✓ Skill installed at $SKILL_DIR"
 else

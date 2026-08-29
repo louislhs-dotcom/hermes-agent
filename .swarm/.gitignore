@@ -1,0 +1,6 @@
+# Swarm runtime state — local to each machine, not for committing.
+# Ignore everything transient (memory.db and its -shm/-wal sidecars,
+# model-router-state.json) while keeping the schema definition tracked.
+*
+!.gitignore
+!schema.sql
