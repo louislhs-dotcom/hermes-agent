@@ -1,0 +1,3 @@
+name: security-gateway
+description: Wire the dormant security_guard plugin into the gateway — scan inbound messages for prompt injection before dispatch.
+version: 0.1.0

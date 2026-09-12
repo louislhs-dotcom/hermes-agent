@@ -1,0 +1,6 @@
+name: security_guard
+description: Prompt injection defense plugin — sanitize, rate-limit, quarantine, and cache responses
+version: 1.0.0
+author: Louis Ling
+license: MIT
+kind: standalone
