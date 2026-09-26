@@ -20,6 +20,11 @@ class SkillReadinessStatus(str, Enum):
     AVAILABLE = "available"
     SETUP_NEEDED = "setup_needed"
     UNSUPPORTED = "unsupported"
+    # Declared dependencies could not be verified as present. Distinct from
+    # SETUP_NEEDED on purpose: a missing system binary is not something the env-var
+    # setup flow can fix, and callers that gate on SETUP_NEEDED must not treat this
+    # as "run setup". Behavior is warn-but-allow.
+    UNTESTED = "untested"
 
 
 def _is_remote_env_backend(backend: str) -> bool:

@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import time
 from contextlib import suppress
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -418,6 +419,51 @@ def _org_provenance_header(skill_dir: Path, active_skills_dir: Path):
     return {"org_id": prov_org, "shared_by": author or None, "as_of": ts or None}, header
 
 
+def _resolve_command(name: str) -> Optional[str]:
+    """Locate an executable by searching PATH plus the common user/Homebrew/uv bin
+    directories. Gateway and service processes often run with a minimal PATH, so a
+    bare ``shutil.which`` reports false 'missing' verdicts for tools the user can
+    actually run from a login shell."""
+    if found := shutil.which(name):
+        return found
+    home = Path.home()
+    for d in (home / ".local" / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
+              home / ".cargo" / "bin", home / ".bun" / "bin", home / ".deno" / "bin"):
+        cand = d / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
+
+
+def _check_required_commands(frontmatter: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """Resolve declared ``required_commands`` against this machine -> (declared, missing).
+
+    The readiness payload previously hardcoded ``required_commands: []`` and
+    ``missing_required_commands: []``, so the command half of the check could never
+    fire: a skill could depend on an absent binary and still report
+    ``readiness_status: available``. Entries are either a plain command name or a
+    mapping with ``optional`` / ``self_provisioned`` flags — a skill that installs
+    its own tooling and calls it by absolute path (e.g. into a private venv) must
+    not be reported missing by a PATH probe.
+    """
+    declared_raw = frontmatter.get("required_commands", [])
+    if not isinstance(declared_raw, list):
+        return [], []
+    declared: List[str] = []
+    missing: List[str] = []
+    for item in declared_raw:
+        opts = item if isinstance(item, dict) else {"name": item}
+        name = str(opts.get("name") or "").strip()
+        if not name:
+            continue
+        declared.append(name)
+        if opts.get("optional") or opts.get("self_provisioned"):
+            continue
+        if _resolve_command(name) is None:
+            missing.append(name)
+    return declared, missing
+
+
 def _skill_readiness(frontmatter: Dict[str, Any], skill_name: str) -> Tuple[dict, dict]:
     """Resolve required env vars / credential files (prompting for secrets where the surface
     allows) and register what's available for sandboxes. Returns ``(fields, extras)``: fields go
@@ -455,11 +501,19 @@ def _skill_readiness(frontmatter: Dict[str, Any], skill_name: str) -> Tuple[dict
             setup_needed = setup_needed or bool(missing_cred_files)
         except Exception:
             logger.debug("Could not register credential files for skill %s", skill_name, exc_info=True)
-    status = SkillReadinessStatus.SETUP_NEEDED if setup_needed else SkillReadinessStatus.AVAILABLE
+    # Commands are verified here (previously hardcoded empty, so this never fired).
+    # Missing commands are reported as UNTESTED, not SETUP_NEEDED: "warn but allow" —
+    # an absent binary is worth surfacing, but it must not block the skill the way a
+    # missing credential does.
+    required_commands, missing_required_commands = _check_required_commands(frontmatter)
+    status = (SkillReadinessStatus.SETUP_NEEDED if setup_needed
+              else SkillReadinessStatus.UNTESTED if missing_required_commands
+              else SkillReadinessStatus.AVAILABLE)
     fields = {
-        "required_environment_variables": required_env_vars, "required_commands": [],
+        "required_environment_variables": required_env_vars, "required_commands": required_commands,
         "missing_required_environment_variables": remaining,
-        "missing_credential_files": missing_cred_files, "missing_required_commands": [],
+        "missing_credential_files": missing_cred_files,
+        "missing_required_commands": missing_required_commands,
         "setup_needed": setup_needed, "setup_skipped": capture_result["setup_skipped"],
         "readiness_status": status.value}
     extras: dict = {}
